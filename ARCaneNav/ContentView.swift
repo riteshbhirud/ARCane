@@ -6,11 +6,11 @@ import RealityKit
 struct ContentView: View {
     @StateObject private var mapper = SpatialMapper()
     @StateObject private var navigator = Navigator()
+    @StateObject private var voiceCommands = VoiceCommandManager.shared
 
     @State private var waypointName = ""
     @State private var showingSaveSheet = false
     @State private var showARView = false
-    
     
     var body: some View {
         ZStack {
@@ -19,6 +19,23 @@ struct ContentView: View {
                 navigator.setupARSession(mapper.arSession)
                 mapper.navigator = navigator
                 
+                // Setup voice command manager
+                voiceCommands.setup(spatialMapper: mapper, navigator: navigator)
+                
+                // Auto-start mapping for hands-free blind users
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    if !mapper.isMapping {
+                        mapper.startMapping()
+                        showARView = true
+                        print("🗺️ Auto-started mapping for hands-free mode")
+                    }
+                    
+                    // Start voice recognition
+                    voiceCommands.startListening()
+                    
+                    // Welcome message
+                    VoiceNavigator.shared.sayWelcome()
+                }
             }
             
             if showARView && mapper.isMapping {
@@ -220,6 +237,11 @@ struct ContentView: View {
                 .padding()
             }
         }
+        .overlay(
+            voiceIndicator
+                .padding(.top, 50),
+            alignment: .top
+        )
         .sheet(isPresented: $showingSaveSheet) {
             SaveWaypointSheet(waypointName: $waypointName, onSave: {
                 if !waypointName.isEmpty {
@@ -231,6 +253,41 @@ struct ContentView: View {
                 waypointName = ""
                 showingSaveSheet = false
             })
+        }
+    }
+    
+    // MARK: - Voice Recognition Indicator
+    
+    private var voiceIndicator: some View {
+        VStack(spacing: 8) {
+            if voiceCommands.isListening {
+                HStack(spacing: 8) {
+                    Image(systemName: "mic.fill")
+                        .foregroundColor(.red)
+                        .font(.system(size: 16))
+                    Text("Listening...")
+                        .font(.caption)
+                        .foregroundColor(.white)
+                        .bold()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.black.opacity(0.8))
+                .cornerRadius(20)
+                
+                if !voiceCommands.recognizedText.isEmpty {
+                    Text(voiceCommands.recognizedText)
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.blue.opacity(0.8))
+                        .cornerRadius(8)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 300)
+                }
+            }
         }
     }
 }

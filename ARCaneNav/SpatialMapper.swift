@@ -2,6 +2,7 @@ import ARKit
 import Combine
 import Accelerate
 import SwiftUI
+
 class SpatialMapper: NSObject, ObservableObject, ARSessionDelegate {
     
     @Published var currentPosition: simd_float3 = .zero
@@ -270,6 +271,7 @@ class SpatialMapper: NSObject, ObservableObject, ARSessionDelegate {
         print("✅ Session resumed")
         statusMessage = "Session resumed"
     }
+    
     // MARK: - Targeting System
         
     func updateTargetPosition() {
@@ -364,7 +366,44 @@ class SpatialMapper: NSObject, ObservableObject, ARSessionDelegate {
         print("   Valid target: \(isTargetValid)")
         
         saveWaypointsToDisk()
+        VoiceNavigator.shared.confirmWaypointSaved(name: name)
     }
+    
+    // MARK: - Voice Command Support
+        
+    func saveWaypointAtPosition(position: SIMD3<Float>, name: String) {
+        // Waypoint takes SIMD3<Float> directly (same as other save methods)
+        let newWaypoint = Waypoint(
+            name: name,
+            position: position
+        )
+        
+        waypoints.append(newWaypoint)
+        saveWaypointsToDisk()
+        
+        print("✅ Saved waypoint '\(name)' at position: \(position)")
+    }
+
+    func deleteWaypoint(_ waypoint: Waypoint) {
+        waypoints.removeAll { $0.id == waypoint.id }
+        saveWaypointsToDisk()
+        print("🗑️ Deleted waypoint: \(waypoint.name)")
+    }
+
+    var currentUserPosition: SIMD3<Float>? {
+        // Get current camera transform from ARSession
+        guard let currentFrame = arSession.currentFrame else { return nil }
+        
+        let cameraTransform = currentFrame.camera.transform
+        let position = SIMD3<Float>(
+            cameraTransform.columns.3.x,
+            cameraTransform.columns.3.y,
+            cameraTransform.columns.3.z
+        )
+        
+        return position
+    }
+    
     func updateNavigator() {
         navigator?.updateNavigation(currentPosition: smoothedPosition, currentHeading: getCurrentHeading())
     }

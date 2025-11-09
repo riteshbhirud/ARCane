@@ -31,6 +31,8 @@ class Navigator: ObservableObject {
     private var lastDirection: NavigationDirection = .none
     private var directionChangeCounter = 0
     private let directionChangeThreshold = 2  // Must be consistent for 2 frames
+    private let haptics = HapticFeedback.shared
+    private let voice = VoiceNavigator.shared
     
     func setup(mapper: SpatialMapper) {
         self.mapper = mapper
@@ -55,8 +57,9 @@ class Navigator: ObservableObject {
         obstacleDetected = false
         obstacleWarning = ""
         obstacleDistance = 0
-        
+        voice.confirmNavigationStarted(destination: waypoint.name)
         print("🧭 Navigation started to \(waypoint.name)")
+        
     }
     
     // Stop navigation
@@ -73,8 +76,14 @@ class Navigator: ObservableObject {
         obstacleWarning = ""
         obstacleDistance = 0
         
+        // STOP ALL CONTINUOUS PATTERNS
+        haptics.stopAll()
+        
+        voice.confirmNavigationStopped()
+        
         print("🛑 Navigation stopped")
     }
+    
     
     // Smooth heading to reduce jitter
     private func smoothHeading(_ newHeading: Float) -> Float {
@@ -121,8 +130,10 @@ class Navigator: ObservableObject {
         // Check if arrived (using HORIZONTAL distance only)
         if horizontalDistance < 0.75 {  // Within 75cm horizontally
             let newDirection: NavigationDirection = .arrived
-            if applyHysteresis(newDirection) {
-                currentDirection = newDirection
+            
+            // FORCE arrival feedback - bypass hysteresis
+            if currentDirection != .arrived {
+                currentDirection = .arrived
                 navigationMessage = "🎉 Arrived at \(target.name)!"
                 print("   ✅ ARRIVED! (horizontal distance < 0.75m)")
                 
@@ -130,11 +141,18 @@ class Navigator: ObservableObject {
                 obstacleDetected = false
                 obstacleWarning = ""
                 obstacleDistance = 0
+                
+                // TRIGGER ARRIVAL FEEDBACK IMMEDIATELY
+                DispatchQueue.global(qos: .userInitiated).async {
+                    self.haptics.arrived()
+                    self.voice.announce(direction: .arrived, distance: self.distanceToTarget)
+                }
             }
             return
         }
         
-        // Obstacle Detection - ONLY when actively navigating and not arrived
+        // Obstacle Detection - TEMPORARILY DISABLED
+        /*
         var obstacleInfo = ObstacleInfo(hasObstacle: false)
         if let session = arSession, isNavigating && currentDirection != .arrived {
             obstacleInfo = obstacleDetector.detectObstacles(
@@ -152,8 +170,17 @@ class Navigator: ObservableObject {
                 print("⚠️ OBSTACLE DETECTED!")
                 print("   Distance: \(String(format: "%.2f", obstacleInfo.obstacleDistance))m")
                 print("   Suggestion: \(obstacleInfo.suggestedDirection)")
+                
+                // Trigger obstacle feedback on background queue
+                if !obstacleDetected {
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        self.haptics.obstacle()
+                        self.voice.announceObstacle(warning: obstacleInfo.warning, distance: obstacleInfo.obstacleDistance)
+                    }
+                }
             }
         }
+        */
         
         // Calculate direction to target
         let toTarget = target.position.vector - currentPosition
@@ -179,7 +206,7 @@ class Navigator: ObservableObject {
         let turnThreshold: Float = 50 * .pi / 180          // ±50° = need to turn
         let wrongWayThreshold: Float = 135 * .pi / 180     // ±135° = facing wrong way!
         
-        // Determine new direction (with obstacle avoidance)
+        // Determine new direction
         let newDirection: NavigationDirection
         let degrees = Int(abs(bearingToTarget))
         
@@ -189,7 +216,8 @@ class Navigator: ObservableObject {
         print("   Current heading: \(String(format: "%.1f", smoothedHeading * 180 / .pi))°")
         print("   Target angle: \(String(format: "%.1f", targetAngle * 180 / .pi))°")
         
-        // PRIORITY 1: Obstacle Avoidance
+        // PRIORITY 1: Obstacle Avoidance - TEMPORARILY DISABLED
+        /*
         if obstacleInfo.hasObstacle {
             // Obstacle detected, override normal navigation
             if obstacleInfo.suggestedDirection == .left {
@@ -203,7 +231,11 @@ class Navigator: ObservableObject {
             }
             
         // PRIORITY 2: Normal Navigation (no obstacles)
-        } else if abs(angleDiff) < straightThreshold {
+        } else
+        */
+        
+        // Normal Navigation (obstacle avoidance disabled)
+        if abs(angleDiff) < straightThreshold {
             // Within ±40 degrees - GO STRAIGHT
             newDirection = .straight
             navigationMessage = "⬆️ Keep Going Straight\n\(String(format: "%.1fm", distanceToTarget)) ahead"
@@ -268,11 +300,54 @@ class Navigator: ObservableObject {
             // Direction has been consistent, allow change
             lastDirection = newDirection
             directionChangeCounter = 0
+            
+            // TRIGGER HAPTIC AND VOICE FEEDBACK
+            triggerFeedback(for: newDirection)
+            
             return true
         }
         
         // Not consistent yet, keep old direction
         return false
+    }
+    
+    // MARK: - Haptic and Voice Feedback
+        
+    // MARK: - Haptic and Voice Feedback
+        
+    // MARK: - Haptic and Voice Feedback
+        
+    private func triggerFeedback(for direction: NavigationDirection) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            // Stop any continuous patterns when changing direction
+            if direction != .straight {
+                self.haptics.stopStraight()
+            }
+            if direction != .turnBack {
+                self.haptics.stopTurnBack()
+            }
+            
+            // Trigger haptic pattern
+            switch direction {
+            case .left:
+                self.haptics.turnLeft()
+            case .right:
+                self.haptics.turnRight()
+            case .straight:
+                self.haptics.goStraight()  // Continuous
+            case .turnBack:
+                self.haptics.turnBack()    // Continuous alarm!
+            case .arrived:
+                self.haptics.arrived()
+            case .none:
+                self.haptics.stopAll()
+            }
+            
+            // Trigger voice announcement
+            if direction != .none {
+                self.voice.announce(direction: direction, distance: self.distanceToTarget)
+            }
+        }
     }
 }
 
